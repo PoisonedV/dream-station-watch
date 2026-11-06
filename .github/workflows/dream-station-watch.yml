@@ -1,0 +1,63 @@
+name: Dream Station Preorder Alerts
+
+on:
+  schedule:
+    # Six checks/hour, offset from the busiest top-of-hour minute (UTC).
+    - cron: '3,13,23,33,43,53 * * * *'
+  workflow_dispatch:
+    inputs:
+      test_message:
+        description: 'Send a Telegram test notification without scraping'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dream-station-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Ensure Chrome is available
+        if: ${{ !inputs.test_message }}
+        run: |
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            python -m playwright install --with-deps chromium
+          fi
+      - name: Run Dream Station watcher
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ "${{ inputs.test_message }}" = "true" ]; then
+            python monitor.py --test-message
+          else
+            python monitor.py
+          fi
+      - name: Commit baseline and status changes
+        if: ${{ !inputs.test_message }}
+        run: |
+          if [ -f state.json ]; then
+            git add state.json
+            if ! git diff --cached --quiet; then
+              git config user.name 'github-actions[bot]'
+              git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+              git commit -m 'Update Dream Station preorder baseline'
+              git push
+            fi
+          fi
